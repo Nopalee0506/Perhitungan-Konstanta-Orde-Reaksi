@@ -1,41 +1,85 @@
 import streamlit as st
-import math
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
 
-st.title("Analisis Orde Reaksi")
+st.set_page_config(page_title="Penentuan Orde Reaksi", layout="centered")
 
-data = st.text_area(
-    "Masukkan data (format: t,A)",
-    "0,10\n1,7\n2,5\n3,3.6"
-)
+# ===== SIDEBAR =====
+with st.sidebar:
+    st.header("⚙️ Pengaturan Analisis")
 
-def regresi(x,y):
-    n=len(x)
-    sx=sum(x); sy=sum(y)
-    sxy=sum(x[i]*y[i] for i in range(n))
-    sx2=sum(i*i for i in x)
-    return (n*sxy - sx*sy)/(n*sx2 - sx*sx)
+    orde_dipilih = st.multiselect(
+        "Pilih orde reaksi",
+        ["Orde 0", "Orde 1", "Orde 2"],
+        default=["Orde 1", "Orde 2"]
+    )
 
-if st.button("Hitung Orde"):
-    try:
-        t=[]; A=[]
-        for row in data.split("\n"):
-            ti, ai = row.split(",")
-            t.append(float(ti))
-            A.append(float(ai))
+    tampil_grafik = st.checkbox("Tampilkan grafik", True)
+    judul_grafik = st.text_input("Judul grafik", "Plot Kinetika Reaksi")
+    ukuran_font = st.slider("Ukuran font", 8, 20, 12)
 
-        A0 = A[0]
-        y1 = [math.log(A0/a) for a in A]
-        y2 = [(1/a - 1/A0) for a in A]
+# ===== MAIN PAGE =====
+st.title("Penentuan Orde Reaksi")
+st.write("Aplikasi ini menentukan orde reaksi berdasarkan data waktu dan absorbansi.")
 
-        k1 = regresi(t,y1)
-        k2 = regresi(t,y2)
+uploaded_file = st.file_uploader("Upload file CSV (waktu, absorbansi)", type=["csv"])
 
-        orde = "ORDE 1" if abs(k1) > abs(k2) else "ORDE 2"
+if uploaded_file is not None:
+    df = pd.read_csv(uploaded_file)
 
-        st.success("Hasil Perhitungan:")
-        st.write("k Orde 1 =", round(k1,4))
-        st.write("k Orde 2 =", round(k2,4))
-        st.write("Kesimpulan:", orde)
+    st.subheader("Data Input")
+    st.dataframe(df)
 
-    except Exception as e:
-        st.error("Format data salah!")
+    t = df.iloc[:,0].values
+    A = df.iloc[:,1].values
+
+    if (A <= 0).any():
+        st.error("❌ Nilai absorbansi harus > 0")
+        st.stop()
+
+    def regresi(x,y):
+        n=len(x)
+        sx, sy = np.sum(x), np.sum(y)
+        sxy = np.sum(x*y)
+        sx2 = np.sum(x*x)
+        m=(n*sxy-sx*sy)/(n*sx2-sx*sx)
+
+        y_pred = m*x + (sy-m*sx)/n
+        r2 = 1 - np.sum((y-y_pred)**2)/np.sum((y-np.mean(y))**2)
+        return m, r2
+
+    if st.button("📊 Analisis Orde"):
+        hasil=[]
+
+        if "Orde 0" in orde_dipilih:
+            k0,r20 = regresi(t,A)
+            hasil.append(("Orde 0",k0,r20))
+
+        if "Orde 1" in orde_dipilih:
+            k1,r21 = regresi(t,np.log(A[0]/A))
+            hasil.append(("Orde 1",k1,r21))
+
+        if "Orde 2" in orde_dipilih:
+            k2,r22 = regresi(t,(1/A - 1/A[0]))
+            hasil.append(("Orde 2",k2,r22))
+
+        df_hasil = pd.DataFrame(hasil, columns=["Orde","k","R²"])
+        st.subheader("Hasil Regresi")
+        st.dataframe(df_hasil)
+
+        terbaik = df_hasil.sort_values("R²",ascending=False).iloc[0]
+        st.success(f"📌 Orde reaksi terbaik: {terbaik['Orde']} (R²={terbaik['R²']:.4f})")
+
+        if tampil_grafik:
+            fig,ax = plt.subplots()
+            for o,_,_ in hasil:
+                if o=="Orde 0": ax.plot(t,A,'o-',label=o)
+                if o=="Orde 1": ax.plot(t,np.log(A[0]/A),'o-',label=o)
+                if o=="Orde 2": ax.plot(t,(1/A - 1/A[0]),'o-',label=o)
+
+            ax.set_title(judul_grafik,fontsize=ukuran_font)
+            ax.set_xlabel("Waktu")
+            ax.set_ylabel("Fungsi Kinetika")
+            ax.legend()
+            st.pyplot(fig)
